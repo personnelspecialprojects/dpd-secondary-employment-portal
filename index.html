@@ -451,6 +451,17 @@
       <h3>Active Alert Rules</h3>
       <div id="rulesList"></div>
     </div>
+
+    <div class="dash-section">
+      <h3>Support Team Access</h3>
+      <p style="font-size:13px;color:var(--muted);margin-bottom:16px;">Staff on this list can sign in and use this portal. Matching ignores domain, so adding either a dallaspolice.gov or dallascityhall.com address covers both for that person.</p>
+      <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;">
+        <input type="email" id="newStaffEmail" placeholder="firstname.lastname@dallaspolice.gov" style="flex:1;min-width:260px;padding:9px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px;">
+        <button class="btn btn-primary" id="addStaffBtn" style="background:var(--navy);">Add User</button>
+      </div>
+      <div id="staffSaveMsg" style="font-size:12px;margin-bottom:10px;"></div>
+      <div id="staffList"></div>
+    </div>
   </div>
 </main>
 
@@ -653,7 +664,8 @@ const AUDIT_FIELDS = {
   previousStatus: "PreviousStatus",
   newStatus: "NewStatus",
   internalNotesSnapshot: "InternalNotesSnapshot",
-  customerNoteSnapshot: "CustomerNoteSnapshot"
+  customerNoteSnapshot: "CustomerNoteSnapshot",
+  problemSnapshot: "ProblemSnapshot"
 };
 
 const ALERT_FIELDS = {
@@ -695,6 +707,7 @@ let spToken = null;
 let allTickets = [];
 let allAuditEntries = [];
 let allAlertRules = [];
+let allStaffMembers = [];
 let selectedRuleColor = PRESET_COLORS[0].hex;
 let pollIntervalId = null;
 let currentTicketId = null;
@@ -715,6 +728,7 @@ document.getElementById("ruleThresholdUnit").addEventListener("change", () => {
     document.getElementById("ruleThresholdUnit").value === "Days" ? "block" : "none";
 });
 document.getElementById("createRuleBtn").addEventListener("click", createAlertRule);
+document.getElementById("addStaffBtn").addEventListener("click", addStaffMember);
 
 (function renderColorPalette(){
   const wrap = document.getElementById("colorPalette");
@@ -822,6 +836,7 @@ async function signIn(){
     await loadTickets();
     await loadAuditLog();
     await loadAlertRules();
+    await loadStaffList();
     const label = document.getElementById("lastSyncedLabel");
     if(label) label.textContent = `Synced ${new Date().toLocaleTimeString()}`;
     startPolling();
@@ -885,6 +900,137 @@ function stopPolling(){
   if(pollIntervalId){
     clearInterval(pollIntervalId);
     pollIntervalId = null;
+  }
+}
+
+async function loadStaffList(){
+  try{
+    const url = `${CONFIG.siteUrl}/_api/web/lists/getbytitle('${encodeURIComponent(CONFIG.staffListTitle)}')/items?$top=500&$select=Id,Title&$orderby=Title asc`;
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${spToken}`, Accept: "application/json;odata=nometadata" }
+    });
+    if(!res.ok){
+      console.error("Support Staff list failed to load:", await res.text());
+      return;
+    }
+    const data = await res.json();
+    allStaffMembers = data.value;
+    renderStaffList();
+  }catch(err){
+    console.error(err);
+  }
+}
+
+function renderStaffList(){
+  const wrap = document.getElementById("staffList");
+  if(!wrap) return;
+  if(!allStaffMembers.length){
+    wrap.innerHTML = `<p style="color:var(--muted);font-size:13px;">No one on the roster yet.</p>`;
+    return;
+  }
+  wrap.innerHTML = allStaffMembers.map(s => `
+    <div class="rule-item">
+      <div class="rule-desc">${escapeHtml(s.Title || "")}</div>
+      <button data-id="${s.Id}" class="removeStaffBtn">Remove</button>
+    </div>
+  `).join("");
+  document.querySelectorAll(".removeStaffBtn").forEach(btn => {
+    btn.addEventListener("click", () => deleteStaffMember(parseInt(btn.dataset.id, 10)));
+  });
+}
+
+async function addStaffMember(){
+  const input = document.getElementById("newStaffEmail");
+  const msg = document.getElementById("staffSaveMsg");
+  const email = input.value.trim().toLowerCase();
+
+  if(!email || !email.includes("@")){
+    msg.className = "";
+    msg.style.color = "var(--red)";
+    msg.textContent = "Enter a valid email address.";
+    return;
+  }
+  const localPart = email.split("@")[0];
+  const alreadyOn = allStaffMembers.some(s => (s.Title || "").toLowerCase().split("@")[0] === localPart);
+  if(alreadyOn){
+    msg.style.color = "var(--red)";
+    msg.textContent = "This person already appears to be on the roster.";
+    return;
+  }
+
+  const btn = document.getElementById("addStaffBtn");
+  btn.disabled = true;
+  msg.style.color = "var(--muted)";
+  msg.textContent = "Adding...";
+
+  try{
+    const digestRes = await fetch(`${CONFIG.siteUrl}/_api/contextinfo`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${spToken}`, Accept: "application/json;odata=nometadata" }
+    });
+    const digest = (await digestRes.json()).FormDigestValue;
+
+    const res = await fetch(
+      `${CONFIG.siteUrl}/_api/web/lists/getbytitle('${encodeURIComponent(CONFIG.staffListTitle)}')/items`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${spToken}`,
+          Accept: "application/json;odata=nometadata",
+          "Content-Type": "application/json;odata=nometadata",
+          "X-RequestDigest": digest
+        },
+        body: JSON.stringify({ Title: email })
+      }
+    );
+    if(!res.ok){
+      console.error(await res.text());
+      msg.style.color = "var(--red)";
+      msg.textContent = "Failed to add — see console.";
+      return;
+    }
+    input.value = "";
+    msg.style.color = "#166534";
+    msg.textContent = "Added.";
+    await loadStaffList();
+  }catch(err){
+    console.error(err);
+    msg.style.color = "var(--red)";
+    msg.textContent = "Failed to add — see console.";
+  }finally{
+    btn.disabled = false;
+  }
+}
+
+async function deleteStaffMember(id){
+  const person = allStaffMembers.find(s => s.Id === id);
+  if(!confirm(`Remove ${person ? person.Title : "this person"} from the support roster? They'll lose access immediately.`)) return;
+  try{
+    const digestRes = await fetch(`${CONFIG.siteUrl}/_api/contextinfo`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${spToken}`, Accept: "application/json;odata=nometadata" }
+    });
+    const digest = (await digestRes.json()).FormDigestValue;
+    const res = await fetch(
+      `${CONFIG.siteUrl}/_api/web/lists/getbytitle('${encodeURIComponent(CONFIG.staffListTitle)}')/items(${id})`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${spToken}`,
+          "X-RequestDigest": digest,
+          "IF-MATCH": "*",
+          "X-HTTP-Method": "DELETE"
+        }
+      }
+    );
+    if(!res.ok){
+      console.error(await res.text());
+      alert("Failed to remove — see console.");
+      return;
+    }
+    await loadStaffList();
+  }catch(err){
+    console.error(err);
   }
 }
 
@@ -1093,7 +1239,7 @@ function renderAuditLog(){
 }
 
 function exportAuditCsv(){
-  const headers = ["Time","Ticket #","Staff Member","Action","Previous Status","New Status","Internal Notes Snapshot","Customer Note Snapshot"];
+  const headers = ["Time","Ticket #","Staff Member","Action","Previous Status","New Status","Problem Snapshot","Internal Notes Snapshot","Customer Note Snapshot"];
   const rows = allAuditEntries.map(e => [
     formatDate(e[AUDIT_FIELDS.logTime]),
     formatTicketId(e[AUDIT_FIELDS.ticketId]),
@@ -1101,6 +1247,7 @@ function exportAuditCsv(){
     e[AUDIT_FIELDS.action] || "",
     e[AUDIT_FIELDS.previousStatus] || "",
     e[AUDIT_FIELDS.newStatus] || "",
+    e[AUDIT_FIELDS.problemSnapshot] || "",
     e[AUDIT_FIELDS.internalNotesSnapshot] || "",
     e[AUDIT_FIELDS.customerNoteSnapshot] || ""
   ]);
@@ -1136,7 +1283,7 @@ function switchTab(viewId){
   document.querySelectorAll(".view").forEach(v => v.classList.toggle("active", v.id === viewId));
   if(viewId === "dashView") renderDashboard();
   if(viewId === "auditView") renderAuditLog();
-  if(viewId === "adminView") renderAdminRules();
+  if(viewId === "adminView"){ renderAdminRules(); renderStaffList(); }
 }
 
 let sortField = "Id", sortDir = -1;
@@ -1411,7 +1558,8 @@ async function createManualEntry(){
       [AUDIT_FIELDS.previousStatus]: "",
       [AUDIT_FIELDS.newStatus]: status,
       [AUDIT_FIELDS.internalNotesSnapshot]: internalNotes,
-      [AUDIT_FIELDS.customerNoteSnapshot]: customerNote
+      [AUDIT_FIELDS.customerNoteSnapshot]: customerNote,
+      [AUDIT_FIELDS.problemSnapshot]: description
     });
 
     await loadTickets();
@@ -1474,7 +1622,8 @@ async function mergeIntoTicket(){
       [AUDIT_FIELDS.previousStatus]: originalSnapshot ? originalSnapshot.status : "",
       [AUDIT_FIELDS.newStatus]: "Merged",
       [AUDIT_FIELDS.internalNotesSnapshot]: mergeNoteForSource,
-      [AUDIT_FIELDS.customerNoteSnapshot]: source[FIELDS.customerNote] || ""
+      [AUDIT_FIELDS.customerNoteSnapshot]: source[FIELDS.customerNote] || "",
+      [AUDIT_FIELDS.problemSnapshot]: source[FIELDS.problem] || ""
     });
     await postAuditEntry(digest, {
       Title: `Ticket #${formatTicketId(target.Id)}`,
@@ -1485,7 +1634,8 @@ async function mergeIntoTicket(){
       [AUDIT_FIELDS.previousStatus]: target[FIELDS.status] || "New",
       [AUDIT_FIELDS.newStatus]: target[FIELDS.status] || "New",
       [AUDIT_FIELDS.internalNotesSnapshot]: mergeNoteForTarget,
-      [AUDIT_FIELDS.customerNoteSnapshot]: target[FIELDS.customerNote] || ""
+      [AUDIT_FIELDS.customerNoteSnapshot]: target[FIELDS.customerNote] || "",
+      [AUDIT_FIELDS.problemSnapshot]: target[FIELDS.problem] || ""
     });
 
     await loadTickets();
@@ -1574,6 +1724,7 @@ async function saveTicket(){
     if(newStatus === "Completed" && document.getElementById("mNoNotify").checked) changes.push("Closed without customer email");
 
     if(changes.length){
+      const currentProblem = problemUnlocked ? document.getElementById("mProblemEdit").value : originalSnapshot.problem;
       await postAuditEntry(digest, {
         Title: `Ticket #${currentTicketId}`,
         [AUDIT_FIELDS.ticketId]: currentTicketId,
@@ -1583,7 +1734,8 @@ async function saveTicket(){
         [AUDIT_FIELDS.previousStatus]: originalSnapshot.status,
         [AUDIT_FIELDS.newStatus]: newStatus,
         [AUDIT_FIELDS.internalNotesSnapshot]: newInternal,
-        [AUDIT_FIELDS.customerNoteSnapshot]: newCustomer
+        [AUDIT_FIELDS.customerNoteSnapshot]: newCustomer,
+        [AUDIT_FIELDS.problemSnapshot]: currentProblem
       });
       await loadAuditLog();
     }
