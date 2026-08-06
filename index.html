@@ -473,6 +473,13 @@
       <button id="modalClose">&times;</button>
     </div>
     <div class="modal-body">
+      <div class="field-row">
+        <label>Requestor Name</label>
+        <div>
+          <input type="text" id="mRequesterName" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;">
+          <div class="hint" id="mRequesterNameHint" style="display:none;">Guessed from the email address — correct it if it's wrong (e.g. name change, hyphenated last name).</div>
+        </div>
+      </div>
       <div class="field-row"><label>Title</label><div class="val" id="mReq"></div></div>
       <div class="field-row"><label>Email</label><div class="val" id="mEmail"></div></div>
       <div class="field-row"><label>Received</label><div class="val" id="mCreated"></div></div>
@@ -1357,12 +1364,17 @@ function openModal(id){
   const t = allTickets.find(x => x.Id === id);
   if(!t) return;
   currentTicketId = id;
+  const storedName = t[FIELDS.requesterName] || "";
+  const displayName = storedName || deriveNameFromEmail(t[FIELDS.email]);
   originalSnapshot = {
     status: t[FIELDS.status] || "New",
     internalNotes: t[FIELDS.internalNotes] || "",
     customerNote: t[FIELDS.customerNote] || "",
-    problem: cleanEmailText(t[FIELDS.problem] || "")
+    problem: cleanEmailText(t[FIELDS.problem] || ""),
+    requesterName: storedName
   };
+  document.getElementById("mRequesterName").value = displayName;
+  document.getElementById("mRequesterNameHint").style.display = storedName ? "none" : "block";
   document.getElementById("modalTitle").textContent = `Ticket #${formatTicketId(id)}`;
   document.getElementById("mReq").textContent = t.Title || "";
   document.getElementById("mEmail").textContent = t[FIELDS.email] || "";
@@ -1661,7 +1673,8 @@ async function saveTicket(){
   const body = {
     [FIELDS.status]: newStatus,
     [FIELDS.internalNotes]: document.getElementById("mInternal").value,
-    [FIELDS.customerNote]: document.getElementById("mCustomer").value
+    [FIELDS.customerNote]: document.getElementById("mCustomer").value,
+    [FIELDS.requesterName]: document.getElementById("mRequesterName").value.trim()
   };
   if(problemUnlocked){
     body[FIELDS.problem] = document.getElementById("mProblemEdit").value;
@@ -1716,10 +1729,12 @@ async function saveTicket(){
 
     const newInternal = document.getElementById("mInternal").value;
     const newCustomer = document.getElementById("mCustomer").value;
+    const newRequesterName = document.getElementById("mRequesterName").value.trim();
     const changes = [];
     if(originalSnapshot.status !== newStatus) changes.push(`Status: ${originalSnapshot.status} → ${newStatus}`);
     if(originalSnapshot.internalNotes !== newInternal) changes.push("Internal Notes updated");
     if(originalSnapshot.customerNote !== newCustomer) changes.push("Customer Note updated");
+    if(originalSnapshot.requesterName !== newRequesterName) changes.push("Requestor Name updated");
     if(problemUnlocked && originalSnapshot.problem !== document.getElementById("mProblemEdit").value) changes.push("Problem field trimmed/edited");
     if(newStatus === "Completed" && document.getElementById("mNoNotify").checked) changes.push("Closed without customer email");
 
@@ -1843,6 +1858,16 @@ function unlockProblemField(){
   document.getElementById("problemLockBtn").textContent = "🔓";
   document.getElementById("problemLockBtn").title = "Unlocked — click to lock again";
   document.getElementById("mProblemEdit").focus();
+}
+
+function deriveNameFromEmail(email){
+  if(!email) return "";
+  const local = email.split("@")[0];
+  const noTrailingDigits = local.replace(/[0-9]+$/, "");
+  const parts = noTrailingDigits.split(/[._-]+/).filter(Boolean);
+  if(!parts.length) return "";
+  const cap = s => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+  return parts.map(cap).join(" ");
 }
 
 function formatTicketId(id){
