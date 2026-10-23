@@ -1895,7 +1895,8 @@ function formatProblemHtml(raw){
   const cleaned = cleanEmailText(raw);
   let escaped = escapeHtml(cleaned);
   // turn bracketed signature links into real clickable links
-  escaped = escaped.replace(/\[(https?:\/\/[^\]]+)\]/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
+  // (no spaces or quote characters allowed inside the link, so email text cannot add HTML attributes)
+  escaped = escaped.replace(/\[(https?:\/\/[^\]\s"'<>]+)\]/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
   return escaped || "<em style=\"color:var(--muted);\">No details provided.</em>";
 }
 </script>
