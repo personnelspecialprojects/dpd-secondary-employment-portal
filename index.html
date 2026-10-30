@@ -635,7 +635,12 @@
 const CONFIG = {
   clientId: "0d384d2a-9a9e-46f6-a195-ad63f9e94f06",
   tenantId: "2935709e-c10c-4809-a302-852d369f8700",
-  redirectUri: "https://personnelspecialprojects.github.io/dpd-secondary-employment-portal/",
+  // Every address this app is published at. Each one must ALSO be added in Azure
+  // (PatrolBidPortal > Authentication > Single-page application), trailing slash included.
+  redirectUris: [
+    "https://personnelspecialprojects.github.io/dpd-secondary-employment-portal/",
+    "https://dpd-secondary-employment-portal.pages.dev/"
+  ],
   siteUrl: "https://dallastxgov.sharepoint.com/sites/PDPersonnelUnit",
   listTitle: "Secondary Employment Requests",
   auditListTitle: "Secondary Employment Audit Log",
@@ -692,11 +697,23 @@ const PRESET_COLORS = [
   { name: "Gray", hex: "#7F8C8D" }
 ];
 
+// Pick the registered address that matches the folder this page is being served from
+// (ignores index.html and query strings). Returns null if this address is not registered.
+function currentBase(){ return (location.origin + location.pathname.replace(/[^/]*$/, "")).toLowerCase(); }
+function redirectUri(){
+  const list = CONFIG.redirectUris;
+  for(let i = 0; i < list.length; i++){
+    if(String(list[i]).toLowerCase() === currentBase()) return list[i];
+  }
+  return null;
+}
+const resolvedRedirectUri = redirectUri();
+
 const msalConfig = {
   auth: {
     clientId: CONFIG.clientId,
     authority: `https://login.microsoftonline.com/${CONFIG.tenantId}`,
-    redirectUri: CONFIG.redirectUri
+    redirectUri: resolvedRedirectUri || CONFIG.redirectUris[0]
   },
   cache: { cacheLocation: "sessionStorage" }
 };
@@ -806,6 +823,10 @@ async function checkAuthorized(username){
 async function signIn(){
   if(!msalInstance){
     alert("The Microsoft sign-in library failed to load (network/CDN issue). Check your internet connection or ask IT if alcdn.msauth.net / alcdn.msftauth.net are blocked on this network, then reload the page.");
+    return;
+  }
+  if(!resolvedRedirectUri){
+    alert("This address isn't set up for sign-in yet: " + currentBase() + "\n\nAdd it to redirectUris in the app code and to the Azure app registration (Single-page application), then reload.");
     return;
   }
   try{
